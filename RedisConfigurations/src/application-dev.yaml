@@ -1,0 +1,17 @@
+#Redis
+#Non Prod
+spring.cache.type: redis
+spring.cache.cache-names: content
+spring.redis.pool.host: clustercfg.wcc-non-prod-cache-cluster.b0p0r3.use1.cache.amazonaws.com:6379
+spring.redis.pool.port: 6379
+spring.redis.pool.max-active: 500
+spring.redis.pool.max-idle: 10
+spring.redis.pool.min-idle: 15
+spring.redis.pool.max-wait: 1000
+spring.redis.pool.min-evictable-idle-time: 60
+spring.redis.pool.softmin-evictable-idle-time: 10
+spring.redis.pool.timebtwn-eviction-run-time: 5
+spring.redis.pool.num-tests-per-eviction-run: 3
+spring.redis.pool.testwhile-idle:  true
+spring.redis.pool.timeout: 2000
+spring.redis.pool.command-timeout: 20000

@@ -1,0 +1,18 @@
+package com.hp.wcc.services.methone.config;
+
+import lombok.Getter;
+import lombok.Setter;
+import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.cloud.context.config.annotation.RefreshScope;
+import org.springframework.context.annotation.Configuration;
+
+import java.util.Map;
+
+@Getter
+@Setter
+@Configuration
+@RefreshScope
+@ConfigurationProperties(prefix = "spring.redis")
+public class RedisProperties {
+    Map<String, String> pool;
+}
