@@ -1,0 +1,137 @@
+package com.hp.wcc.services.methone.config;
+
+
+import io.lettuce.core.ClientOptions;
+import io.lettuce.core.ReadFrom;
+import io.lettuce.core.SocketOptions;
+import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.pool2.impl.GenericObjectPoolConfig;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Primary;
+import org.springframework.context.annotation.Profile;
+import org.springframework.data.redis.connection.RedisClusterConfiguration;
+import org.springframework.data.redis.connection.RedisStandaloneConfiguration;
+import org.springframework.data.redis.connection.lettuce.LettuceClientConfiguration;
+import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
+import org.springframework.data.redis.connection.lettuce.LettucePoolingClientConfiguration;
+import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.serializer.GenericJackson2JsonRedisSerializer;
+import org.springframework.data.redis.serializer.StringRedisSerializer;
+
+import java.time.Duration;
+import java.util.Collections;
+import java.util.List;
+
+@Configuration
+@Slf4j
+public class RedisConfig {
+
+    @Autowired
+    RedisProperties redisProperties;
+
+    @Bean
+    @Profile("!local")
+    @Primary
+    public LettuceConnectionFactory redisConnectionFactory() {
+        log.info("redis-cluster in non-local initialization in progress...");
+        final SocketOptions socketOptions = SocketOptions.builder().connectTimeout(Duration.ofMillis(Integer.parseInt
+                (redisProperties.getPool().get("timeout")))).build();
+        final ClientOptions clientOptions = ClientOptions.builder().socketOptions(socketOptions).build();
+
+        final LettuceClientConfiguration lettuceClientConfiguration =
+                LettucePoolingClientConfiguration.builder()
+                        .readFrom(ReadFrom.REPLICA_PREFERRED) //Its an abstract class in Lettuce.core package. It defines from which Redis nodes data is read.
+                            // REPLICA_PREFERRED : Setting to read preferred from replica and fall back to upstream if no replica is not available.
+                        .commandTimeout(Duration.ofMillis(Integer.parseInt(redisProperties.getPool().get("command-timeout"))))
+                        .clientOptions(clientOptions)
+                        .poolConfig(getGenericObjectPoolConfig())
+                        .useSsl()
+                        .build();
+
+        List<String> nodes = Collections.singletonList(redisProperties.getPool().get("host"));
+        RedisClusterConfiguration clusterConfiguration = new RedisClusterConfiguration(nodes);
+
+        final LettuceConnectionFactory lettuceConnectionFactory =
+
+                new LettuceConnectionFactory(clusterConfiguration, lettuceClientConfiguration);
+
+
+        log.info("redis-cluster in non-local env setup is established");
+        return lettuceConnectionFactory;
+    }
+
+    @Bean
+    @Profile("!local")
+    @Primary
+    public RedisTemplate<String, String> getNonLocalRedisTemplate() {
+        log.info("redis-cluster redisTemplate in non-local env setup is established");
+        RedisTemplate<String, String> redisTemplate = new RedisTemplate<>();
+        redisTemplate.setKeySerializer(new StringRedisSerializer());
+        redisTemplate.setValueSerializer(new GenericJackson2JsonRedisSerializer());
+        redisTemplate.setConnectionFactory(redisConnectionFactory());
+        return redisTemplate;
+    }
+
+    @Bean
+    @Profile("local")
+    @Primary
+    public LettuceConnectionFactory redisLocalConnectionFactory() {
+        log.info("redis-cluster in local initialization in progress....");
+        LettuceClientConfiguration clientConfig = LettuceClientConfiguration.builder()
+                .readFrom(ReadFrom.REPLICA_PREFERRED)
+                .build();
+
+        RedisStandaloneConfiguration serverConfig = new RedisStandaloneConfiguration(redisProperties.getPool().get("host"),
+                Integer.parseInt(redisProperties.getPool().get("port")));
+        log.info("redis-cluster in local env setup is established");
+        return new LettuceConnectionFactory(serverConfig, clientConfig);
+    }
+
+    @Bean
+    @Profile("local")
+    @Primary
+    public RedisTemplate<String, String> getLocalRedisTemplate() {
+        log.info("redis-cluster redisTemplate in local env setup is established");
+        RedisTemplate<String, String> redisTemplate = new RedisTemplate<>();
+        redisTemplate.setKeySerializer(new StringRedisSerializer());
+        redisTemplate.setValueSerializer(new GenericJackson2JsonRedisSerializer());
+        redisTemplate.setConnectionFactory(redisLocalConnectionFactory());
+        return redisTemplate;
+    }
+
+    private GenericObjectPoolConfig<RedisClusterConfiguration> getGenericObjectPoolConfig() {
+        GenericObjectPoolConfig<RedisClusterConfiguration> poolConfig = new GenericObjectPoolConfig<>();
+        //Maximum number of active connections that can be allocated from this pool at the same time
+        poolConfig.setMaxTotal(Integer.parseInt(redisProperties.getPool().get("max-active")));
+        //Number of connections to Redis that just sit there and do nothing
+        poolConfig.setMaxIdle(Integer.parseInt(redisProperties.getPool().get("max-idle")));
+        //Minimum number of idle connections to Redis - these can be seen as always open and ready to serve
+        poolConfig.setMinIdle(Integer.parseInt(redisProperties.getPool().get("min-idle")));
+        //The maximum number of milliseconds that the pool will wait (when there are no available connections) for a connection to be returned before throwing an exception
+        poolConfig.setMaxWaitMillis(Long.parseLong(redisProperties.getPool().get("max-wait")));
+        //The minimum amount of time an object may sit idle in the pool before it is eligible for eviction by the idle object evictor
+        poolConfig.setMinEvictableIdleTimeMillis(Duration.ofSeconds(Long.parseLong(redisProperties.getPool()
+                .get("min-evictable-idle-time"))).toMillis());
+        //The minimum amount of time a connection may sit idle in the pool before it is eligible for eviction by the idle connection evictor
+        poolConfig.setSoftMinEvictableIdleTimeMillis(Duration.ofSeconds(Long.parseLong(redisProperties.getPool()
+                .get("softmin-evictable-idle-time"))).toMillis());
+        //Idle connection checking period
+        poolConfig.setTimeBetweenEvictionRunsMillis(Duration.ofSeconds(Long.parseLong(redisProperties.getPool()
+                .get("timebtwn-eviction-run-time"))).toMillis());
+        //Maximum number of connections to test in each idle check
+        poolConfig.setNumTestsPerEvictionRun(Integer.parseInt(redisProperties.getPool().get("num-tests-per-eviction-run")));
+        //Tests whether connection is dead when connection retrieval method is called
+        poolConfig.setTestOnBorrow(true);
+        //Tests whether connection is dead when returning a connection to the pool
+        poolConfig.setTestOnReturn(true);
+        //Tests whether connections are dead during idle periods
+        poolConfig.setTestWhileIdle(Boolean.parseBoolean(redisProperties.getPool().get("testwhile-idle")));
+        poolConfig.setBlockWhenExhausted(true);
+        return poolConfig;
+    }
+
+
+}
+

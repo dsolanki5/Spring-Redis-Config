@@ -1,0 +1,148 @@
+/*
+* Example 1 : 
+*
+*/ 
+	
+	******* Redis Key: **********
+	String cacheHashKey = new StringBuffer(ProductInfoConstants.CACHE_PROD_INFO).append(ProductInfoConstants.DOUBLE_COLON)
+				.append(env.getActiveProfiles()[0]).append(ProductInfoConstants.DOUBLE_COLON).append(countryCode).append(ProductInfoConstants.DOUBLE_COLON).append(languageCode)
+				.append(ProductInfoConstants.DOUBLE_COLON).append(cacheOid).toString();
+	
+	********** Read from Redis : ***********
+	responseObjectStr = redisTemplate.opsForValue().get(cacheHashKey);
+	
+	******** Set the value in Redis: ************
+	try {
+						redisTemplate.opsForValue().setIfAbsent(cacheHashKey, mapper.writeValueAsString(productInfoResponse),
+								Duration.ofSeconds(Integer.parseInt(appProps.getRedisContentExpirySec())));
+					} catch (JsonProcessingException e) {
+						log.error("Error storing product info in cache ", e);
+					}
+					
+	
+	************** Below is the detailed method for above redis config ************
+				
+	public ProductInfoResponse getProdInfoByOidorName(Map<String, String> dataExchangePojo,Optional<Boolean> isSKUWarrantyReq) {
+		String cacheOid = (dataExchangePojo.get(ProductInfoConstants.SKU) == null || ProductInfoConstants.NULL.equals(dataExchangePojo.get(ProductInfoConstants.SKU)))
+				? dataExchangePojo.get(ProductInfoConstants.MODEL_OID)
+				: dataExchangePojo.get(ProductInfoConstants.SKU);
+		cacheOid = (cacheOid == null || ProductInfoConstants.NULL.equals(cacheOid)) ? dataExchangePojo.get(ProductInfoConstants.SERIES_OID) : cacheOid;
+		String languageCode = dataExchangePojo.get(ProductInfoConstants.LC);
+		String countryCode = dataExchangePojo.get(ProductInfoConstants.CC);
+		if(!languageCode.equalsIgnoreCase(ProductInfoConstants.EN)
+				&& (countryCode.equalsIgnoreCase(ProductInfoConstants.TW)
+					||countryCode.equalsIgnoreCase(ProductInfoConstants.HK)
+					|| countryCode.equalsIgnoreCase(ProductInfoConstants.CN))){
+			if (countryCode.equalsIgnoreCase(ProductInfoConstants.TW)) {
+				languageCode = ProductInfoConstants.ZH;
+			}
+			if (countryCode.equalsIgnoreCase(ProductInfoConstants.HK)) {
+				languageCode = ProductInfoConstants.ZH_HANT;
+			}
+			if (countryCode.equalsIgnoreCase(ProductInfoConstants.CN)) {
+				languageCode = ProductInfoConstants.ZH_HANS;
+			}
+		}
+		String cacheHashKey = new StringBuffer(ProductInfoConstants.CACHE_PROD_INFO).append(ProductInfoConstants.DOUBLE_COLON)
+				.append(env.getActiveProfiles()[0]).append(ProductInfoConstants.DOUBLE_COLON).append(countryCode).append(ProductInfoConstants.DOUBLE_COLON).append(languageCode)
+				.append(ProductInfoConstants.DOUBLE_COLON).append(cacheOid).toString();
+		String responseObjectStr = null;
+		ProductInfoMongo productInfoFromMongo = null;
+		ProductInfoResponse productInfoResponse = null;
+		ObjectMapper mapper = new ObjectMapper();
+			responseObjectStr = redisTemplate.opsForValue().get(cacheHashKey);
+			if (responseObjectStr == null) {
+				List<ProductHierarchyMongo> productHierarchyList = null;
+				int oid = -1;
+				try {
+					oid = Integer.parseInt(cacheOid);
+					productHierarchyList = repository.getHierarchyByOID(oid);
+				} catch (NumberFormatException nfe) {
+					if(isSKUWarrantyReq.isPresent() && isSKUWarrantyReq.get().booleanValue()) {
+						List<String> skuReqInfo = Arrays.asList(new String[] {cacheOid});
+						productHierarchyList= repository.getSkuDetails(skuReqInfo);
+					}else {
+						productHierarchyList = repository.getProductInfoByName(cacheOid);
+					}
+					
+				}
+
+				if (productHierarchyList != null && !productHierarchyList.isEmpty()) {
+					if (oid != -1) {
+						productInfoFromMongo = new ProductInfoMongo(productHierarchyList.get(0), languageCode, oid);
+
+					} else {
+						productInfoFromMongo = new ProductInfoMongo(productHierarchyList.get(0), languageCode,
+								productHierarchyList.get(0).getPmNumber().getPmNumberOid());
+					}
+					productInfoResponse = populateProductResponse(productInfoFromMongo, cacheOid, dataExchangePojo,
+							productHierarchyList,isSKUWarrantyReq);
+					try {
+						redisTemplate.opsForValue().setIfAbsent(cacheHashKey, mapper.writeValueAsString(productInfoResponse),
+								Duration.ofSeconds(Integer.parseInt(appProps.getRedisContentExpirySec())));
+					} catch (JsonProcessingException e) {
+						log.error("Error storing product info in cache ", e);
+					}
+
+				} else {
+					return null;
+				}
+			} else {
+				try {
+					productInfoResponse = mapper.readValue(responseObjectStr, ProductInfoResponse.class);
+				} catch (IOException e) {
+					log.error("Error retrieving product info from cache ", e);
+				}
+			}
+		return productInfoResponse;
+	}
+	
+	
+/*
+* Example 2 : 
+*
+*/ 
+	
+	public Map<String, String> getProcessedCCLCRegionMap(String serviceOid) {
+
+		log.info("Service Oid : "+ GeneralUtil.getSanitizedParam(serviceOid));
+		
+		
+		// ******* ******* *******  <<< Create the key to store in Redis >>> ******* ******* *******
+		String cacheHashKey = new StringBuffer(serviceOid).append("::").append(env.getActiveProfiles()[0])
+				.append("::CLCData").toString();
+		// ******* ******* ******* ******* ******* ******* ******* ******* ******* ******* *******
+		
+		
+		
+		// ******* ******* *******  <<< Read the value from Redis >>> ******* ******* *******
+		Map<String, String> languageRegionMap = null;
+		try {
+			if (redisTemplate.opsForValue().get(cacheHashKey) != null) {
+				languageRegionMap = mapper.readValue(redisTemplate.opsForValue().get(cacheHashKey), Map.class);
+			}
+		} catch (IOException | NullPointerException e) {
+			log.info("No Sitemap CLC data found in redis", e);
+			languageRegionMap = null;
+		}
+		// ******* ******* ******* ******* ******* ******* ******* ******* ******* ******* *******
+		
+		
+		if (languageRegionMap == null) {
+			List<CLCRegions> cLCRegionsList = getAllCLCRegions(serviceOid);
+			languageRegionMap = flattenCLCRegionsToCountryLanguage(cLCRegionsList);
+			
+			
+			// ******* ******* *******  <<< Set the value in Redis >>> ******* ******* *******
+			try {
+				redisTemplate.opsForValue().setIfAbsent(cacheHashKey, mapper.writeValueAsString(languageRegionMap),
+						Duration.ofSeconds(Integer.parseInt(sitemapProps.getRedisContentExpirySec())));
+			} catch (JsonProcessingException e) {
+				log.error("Error storing product series count in cache ", e);
+			}
+			// ******* ******* ******* ******* ******* ******* ******* ******* ******* ******* *******
+			
+			
+		}
+		return languageRegionMap;
+	}
